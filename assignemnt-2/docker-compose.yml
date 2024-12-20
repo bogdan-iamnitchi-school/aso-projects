@@ -1,0 +1,42 @@
+version: '3'
+services:
+
+  # Serviciul CNC (Command and Control) care controlează botul. Acesta este accesibil prin porturile 23 și 101 și se află pe rețeaua 'my_network' cu adresa IP 172.16.0.2.
+  cnc:
+    container_name: cnc
+    build: ./cnc
+    networks:
+      my_network:
+        ipv4_address: 172.16.0.2
+    expose:
+      - 23
+      - 101
+
+  # Serviciul Bot, care depinde de serviciul CNC pentru a funcționa. Acesta va fi accesibil pe rețeaua 'my_network' cu adresa IP 172.16.0.3.
+  bot:
+    container_name: bot
+    depends_on:
+      - cnc
+    build: ./bot
+    networks:
+      my_network:
+        ipv4_address: 172.16.0.3
+
+  # Serviciul Victim, care reprezintă un sistem țintă ce poate fi atacat. Este accesibil pe rețeaua 'my_network' cu adresa IP 172.16.0.4 și expune portul 23 pentru Telnet.
+  victim:
+    container_name: victim
+    build: ./victim
+    tty: true
+    networks:
+      my_network:
+        ipv4_address: 172.16.0.4
+    expose:
+      - 23
+
+# Definirea rețelei personalizate 'my_network' pentru comunicarea între containere, cu o subrețea specifică de 172.16.0.0/24.
+networks:
+  my_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.16.0.0/24
