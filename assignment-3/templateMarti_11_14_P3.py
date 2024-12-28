@@ -339,43 +339,66 @@ class UdpPlainAttack:
 
 import json
 
+
 class GreIpAttack:
     """
     Generic Routing Encapsulation (https://www.cloudflare.com/learning/network-layer/what-is-gre-tunneling/) este un
     protocol de incapsulare a unui pachet IP pentru a travesra o rețea virtuală point to point.
+
     Acesta poate fi folosit pentru un atac brute force prin trimiterea unor adrese random sau unreacheable, pe care
-    serverul o să incerce să determine dacă sunt accesbile. Dacă sunt accesbile o să incerce să redirecteze pachetul
-    spre destinație. Altfel o să răspundă inpoi un pachet ICMP cu Destination unrecheable.
+    serverul o să încerce să determine dacă sunt accesbile. Dacă sunt accesbile o să încerce să redirecteze pachetul
+    spre destinație. Altfel o să răspundă împoi un pachet ICMP cu Destination unrecheable.
+
     In ambele cazuri se folosesc resurse, care la un numar mare de utilizatori, pot să fie epuizate.
     """
-    def __init__(self):
-        self.gre_ip_timestamps = {}
-        self.gre_ip_attack_count = 50
-        self.gre_ip_attack_interval = 2
-        self.gre_ip_attackers = {}
 
-    def count_bruteforce_attack(self, packet):
-        print(packet.layers)
-        return False
-        
     # HINT: Ne uitam după următoarele informați:
     #   - ip.src, ip.dst, ip.dstport constante
     #   - orice port sursa
     #   - aceasi marime a headerului UDP
     #   - aceasi adresa sursa in al doilea header ip.
+
+    def __init__(self):
+        # Putem să detectăm dacă un utilizator trimite un număr foarte mare de pachete SYN intr-un interval scurt
+        self.bruteforce_timestamps = {}
+        self.bruteforce_attack_count = 50  # packets
+        self.bruteforce_attack_interval = 2  # seconds
+        self.bruteforce_attackers = {}
+
+    def count_bruteforce_attack(self, packet, ip_layer2):
+        # Atacatorul poate folosi toate porturile sa atace un server deschis la un anumit port.
+        key = (packet.ip.src, packet.udp.dstport, packet.ip.dst, ip_layer2.src)
+        start_window = float(packet.sniff_timestamp) - self.bruteforce_attack_interval
+
+        self.bruteforce_timestamps[key] = [
+            (t, ip) for t, ip in self.bruteforce_timestamps.get(key, []) if t > start_window
+        ]
+        self.bruteforce_timestamps[key].append((float(packet.sniff_timestamp), ip_layer2.dst))
+
+        uniq_ips = set([ip for t, ip in self.bruteforce_timestamps[key]])
+
+        if len(uniq_ips) >= self.bruteforce_attack_count:
+            if key not in self.bruteforce_attackers:
+                print(
+                    f"\nGRE bruteforce attack from {packet.ip.src}:{packet.udp.srcport} to {packet.ip.dst}:{packet.udp.dstport}")
+            self.bruteforce_attackers[key] = packet.sniff_timestamp
+            return True
+        else:
+            if key in self.bruteforce_attackers:
+                del self.bruteforce_attackers[key]
+        return False
+
     def check_packet(self, packet):
         if "GRE" not in packet or "UDP" not in packet:
             return False
 
-        # Un pachet GRE generat de Mirai arată:
-        # [<ETH Layer>, <IP Layer>, <GRE Layer>, <IP Layer>, <UDP Layer>, <DATA Layer>]
-        if len(packet.layers) != 6:
+        ip_header2 = packet.layers[3]
+
+        # Ne asigurăm că avem un header IP.
+        if not ip_header2.has_field("proto") or ip_header2.proto.showname_value.split()[0] != "UDP":
             return False
 
-        # ip_header2 = packet.layers[3]
-        # if not ip_header2.has_field("proto") or ip_header2.proto.showname_value.split()[0] != "UDP":
-        #     return
-        return self.count_bruteforce_attack(packet)
+        return self.count_bruteforce_attack(packet, ip_header2)
 
 
 total_packets_count = None
@@ -438,7 +461,7 @@ def main():
     cap = pyshark.FileCapture(
         args.capture_path,
         display_filter=DISPLAY_FILTER,  # Include only relevant packets.
-        use_json=True,  # Improve parsing speed.
+        # use_json=True,  # Improve parsing speed.
         include_raw=False,  # Improve parsing speed but strip some raw values.
         custom_parameters={"-j": "frame ip udp tcp"}  # Filter only the desired protocols to also improve speed.
     )
@@ -449,9 +472,9 @@ def main():
     attack_monitors = [
         SynAttack(),
         AckAttack(),
+        GreIpAttack(),
         UdpPlainAttack(),
         UdpAttack(),
-        GreIpAttack(),
     ]
 
     index = 0
